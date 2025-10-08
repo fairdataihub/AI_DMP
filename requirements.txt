@@ -1,0 +1,65 @@
+# ============================
+# Core Python Utilities
+# ============================
+python-dotenv
+numpy
+pandas
+matplotlib
+scikit-learn
+
+# ============================
+# Deep Learning & NLP
+# ============================
+torch
+transformers
+tiktoken
+
+# ============================
+# LLMs & RAG Frameworks
+# ============================
+openai
+ollama
+google.generativeai
+
+# LangChain ecosystem (pinned)
+langchain
+langchain-community
+langchain-core
+langchain-google-genai
+langchain-groq
+
+# ============================
+# Document Processing
+# ============================
+# PDFs & Docs
+pypdf
+PyMuPDF
+docx2txt
+pypandoc
+
+# ============================
+# Backend & API
+# ============================
+fastapi
+uvicorn
+python-multipart
+structlog
+
+# ============================
+# Indexing & Search
+# ============================
+faiss-cpu
+
+# ============================
+# Development & Testing
+# ============================
+ipykernel
+pytest
+cfn-lint
+
+# ============================
+# UI & Deployment
+# ============================
+streamlit
+
+-e.
