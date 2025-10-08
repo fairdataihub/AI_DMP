@@ -34,4 +34,4 @@ git commit -m "<write your commit message>"
 git push
 
 # Cloning the repository
-git clone 
+git clone https://github.com/fairdataihub/DMP_RAG.git
