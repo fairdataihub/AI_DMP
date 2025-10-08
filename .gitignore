@@ -1,4 +1,4 @@
-# Python cache & virtualenv
+# Python cache & virtualenv 
 __pycache__/
 *.py[cod]
 *.so
@@ -39,3 +39,7 @@ logs/
 dist/
 build/
 document_portal.egg-info/
+
+# Documents
+*.docx
+*.md

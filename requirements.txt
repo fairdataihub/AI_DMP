@@ -1,65 +1,67 @@
-# ============================
-# Core Python Utilities
-# ============================
+# ============================================
+# 🧩 Core Python Utilities
+# ============================================
 python-dotenv
 numpy
 pandas
 matplotlib
 scikit-learn
 
-# ============================
-# Deep Learning & NLP
-# ============================
+# ============================================
+# 🤖 Deep Learning & NLP
+# ============================================
 torch
 transformers
 tiktoken
 
-# ============================
-# LLMs & RAG Frameworks
-# ============================
+# ============================================
+# 🧠 LLMs & RAG Frameworks
+# ============================================
 openai
 ollama
-google.generativeai
+google-generativeai
 
-# LangChain ecosystem (pinned)
+# LangChain ecosystem
 langchain
 langchain-community
 langchain-core
 langchain-google-genai
 langchain-groq
 
-# ============================
-# Document Processing
-# ============================
-# PDFs & Docs
+# ============================================
+# 📄 Document Processing
+# ============================================
 pypdf
 PyMuPDF
 docx2txt
 pypandoc
 
-# ============================
-# Backend & API
-# ============================
+# ============================================
+# ⚙️ Backend & API
+# ============================================
 fastapi
 uvicorn
 python-multipart
 structlog
 
-# ============================
-# Indexing & Search
-# ============================
+# ============================================
+# 🔍 Indexing & Search
+# ============================================
 faiss-cpu
 
-# ============================
-# Development & Testing
-# ============================
+# ============================================
+# 🧪 Development & Testing
+# ============================================
 ipykernel
 pytest
 cfn-lint
 
-# ============================
-# UI & Deployment
-# ============================
+# ============================================
+# 💻 UI & Deployment
+# ============================================
 streamlit
 
--e.
+# ============================================
+# 📦 Local Package (Editable Install)
+# ============================================
+-e .
