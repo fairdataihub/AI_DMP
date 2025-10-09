@@ -50,7 +50,7 @@ class CustomLogger:
 
 
 # --- Example usage section ---
-Z#if __name__ == "__main__":  # runs only if the file is executed directly
+#if __name__ == "__main__":  # runs only if the file is executed directly
    # logger = CustomLogger().get_logger(__file__)  # create a logger instance for this file
   #  logger.info("User uploaded a file", user_id=123, filename="report.pdf")  # info log example
  #   logger.error("Failed to process PDF", error="File not found", user_id=123)  # error log example
