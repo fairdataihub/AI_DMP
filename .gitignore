@@ -1,4 +1,6 @@
-# Python cache & virtualenv 
+# ========================
+# 🐍 Python Cache & Virtualenv
+# ========================
 __pycache__/
 *.py[cod]
 *.so
@@ -6,41 +8,58 @@ __pycache__/
 *.pyo
 env/
 venv/
+.venv/
 *.egg-info/
 *.egg
-*.log
 
-# OS & editor files
+# ========================
+# 🧰 OS & Editor Files
+# ========================
 .DS_Store
 .vscode/
 .idea/
 
-# LangChain-related
+# ========================
+# 🧠 LangChain / Vector Store
+# ========================
 faiss_index/
 *.faiss
 *.pkl
 
-# Data & archive
+# ========================
+# 📂 Data & Archives
+# ========================
 data/
+outputs/
 archive/
 main_archive/
 *.pdf
 
-# Secrets & configs
-.venv
+# ========================
+# 🔐 Secrets & Configs
+# ========================
 .env
 .env.*
+*.yaml
+*.yml
+*.json
+*.sqlite3
+*.md   # Ignore Markdown files (notes, prompts, etc.)
 
-# Logs
+# ========================
+# 🪵 Logs
+# ========================
 logs/
 *.log
 
-# Build/Dist
+# ========================
+# 🏗️ Build & Distribution
+# ========================
 dist/
 build/
 document_portal.egg-info/
-test.py
 
-# Documents
-*.docx
-*.md
+# ========================
+# 🧪 Temporary & Test Files
+# ========================
+test.py
