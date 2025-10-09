@@ -5,6 +5,7 @@ import structlog  # for structured (JSON-style) logging
 
 
 class CustomLogger:
+    
     def __init__(self, log_dir="logs"):  # initialize logger with optional log directory
         # Create the logs directory if it doesn't already exist
         self.logs_dir = os.path.join(os.getcwd(), log_dir)  # make full path for logs folder
