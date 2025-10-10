@@ -37,6 +37,12 @@ docx2txt
 pypandoc
 
 # ============================================
+# 🌐 Web & Data Retrieval
+# ============================================
+requests
+beautifulsoup4
+
+# ============================================
 # ⚙️ Backend & API
 # ============================================
 fastapi
@@ -60,6 +66,9 @@ cfn-lint
 # 💻 UI & Deployment
 # ============================================
 streamlit
+
+selenium
+webdriver-manager
 
 # ============================================
 # 📦 Local Package (Editable Install)
