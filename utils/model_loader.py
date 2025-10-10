@@ -1,16 +1,12 @@
 import os
 import sys
+import json
 from dotenv import load_dotenv
 from utils.config_loader import load_config
 from langchain_community.chat_models import ChatOllama
 from langchain_community.embeddings import OllamaEmbeddings
-from logger.custom_logger import CustomLogger
+from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
-
-
-# Initialize logger
-# ✅ Create the actual structlog logger
-log = CustomLogger().get_logger(__file__)
 
 class ModelLoader:
     """
