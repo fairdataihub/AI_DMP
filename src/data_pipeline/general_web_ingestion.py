@@ -13,14 +13,12 @@ from exception.custom_exception import DocumentPortalException
 
 class GenericWebIngestion:
     """
-    🌐 Generic Web Ingestion for DMP-RAG (Multi-Seed Edition)
-    ----------------------------------------------------------
-    ✅ Accepts multiple seed URLs from file (.json)
-    ✅ Crawls internal links recursively (depth-limited)
-    ✅ Extracts readable text (headings, paragraphs, lists)
-    ✅ Downloads linked PDFs
-    ✅ Skips duplicates via manifest.json (hash-based)
-    ✅ Handles multiple domains in one run
+    🌐 Generic Web Ingestion (RAG-Optimized Edition)
+    ------------------------------------------------
+    ✅ Collects only meaningful content (text + PDFs)
+    ✅ Removes logos, headers, menus, ads, etc.
+    ✅ Saves each run separately under data/general_web_ingestion/<session_id>/
+    ✅ Ideal for building clean retrieval datasets
     """
 
     def __init__(
@@ -29,34 +27,41 @@ class GenericWebIngestion:
         max_depth: int = 2,
         crawl_delay: float = 1.5,
         max_pages: int = 200,
+        session_id: str | None = None,
     ):
         self.data_root = Path(data_root)
-        self.web_dir = self.data_root / "web_sources"
-        self.manifest_path = self.web_dir / "manifest.json"
+        self.session_id = session_id or datetime.now().strftime("session_%Y%m%d_%H%M%S")
+
+        # Directory isolation
+        self.base_dir = self.data_root / "general_web_ingestion" / self.session_id
+        self.txt_dir = self.base_dir / "texts"
+        self.pdf_dir = self.base_dir / "pdfs"
+        self.manifest_path = self.base_dir / "manifest.json"
+
         self.max_depth = max_depth
         self.crawl_delay = crawl_delay
         self.max_pages = max_pages
         self.session = requests.Session()
 
-        self.web_dir.mkdir(parents=True, exist_ok=True)
-        self.manifest = self._load_manifest()
-        log.info("GenericWebIngestion initialized", web_dir=str(self.web_dir))
+        self.txt_dir.mkdir(parents=True, exist_ok=True)
+        self.pdf_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest = {}
+
+        log.info("🆕 RAG Ingestion started", session=self.session_id, folder=str(self.base_dir))
 
     # --------------------------------------------------------
     # Manifest Handling
     # --------------------------------------------------------
-    def _load_manifest(self):
-        if self.manifest_path.exists():
-            try:
-                with open(self.manifest_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
     def _save_manifest(self):
+        manifest_data = {
+            "session_id": self.session_id,
+            "created_at": datetime.utcnow().isoformat(),
+            "file_count": len(self.manifest),
+            "files": list(self.manifest.values()),
+        }
         with open(self.manifest_path, "w", encoding="utf-8") as f:
-            json.dump(self.manifest, f, indent=2)
+            json.dump(manifest_data, f, indent=2)
+        log.info("💾 Manifest saved", file=self.manifest_path)
 
     # --------------------------------------------------------
     # Hash Utility
@@ -70,22 +75,19 @@ class GenericWebIngestion:
     # PDF Downloader
     # --------------------------------------------------------
     def _download_pdf(self, pdf_url: str):
-        """Downloads a PDF file and records it in the manifest."""
+        """Downloads PDF content suitable for RAG use."""
         try:
             resp = self.session.get(pdf_url, timeout=30)
             if resp.status_code != 200 or b"%PDF" not in resp.content[:500]:
                 return
 
             file_name = Path(urlparse(pdf_url).path).name or f"file_{hashlib.md5(pdf_url.encode()).hexdigest()}.pdf"
-            domain_folder = self.web_dir / urlparse(pdf_url).netloc
-            domain_folder.mkdir(parents=True, exist_ok=True)
-            dest = domain_folder / file_name
-
+            dest = self.pdf_dir / file_name
             file_hash = self._compute_hash(resp.content)
-            for _, v in self.manifest.items():
-                if v.get("hash") == file_hash:
-                    log.info("⏩ Skipped existing PDF", file=file_name)
-                    return
+
+            if any(file_hash == item.get("hash") for item in self.manifest.values()):
+                log.info("⏩ Skipped duplicate PDF", file=file_name)
+                return
 
             with open(dest, "wb") as f:
                 f.write(resp.content)
@@ -93,28 +95,41 @@ class GenericWebIngestion:
             self.manifest[pdf_url] = {
                 "file": str(dest),
                 "hash": file_hash,
-                "last_updated": datetime.utcnow().isoformat(),
                 "type": "pdf",
+                "last_updated": datetime.utcnow().isoformat(),
             }
             log.info("📥 PDF downloaded", file=file_name)
-            self._save_manifest()
 
         except Exception as e:
             log.error("❌ PDF download failed", url=pdf_url, error=str(e))
 
     # --------------------------------------------------------
-    # Text Extractor
+    # Text Extractor (content-focused)
     # --------------------------------------------------------
     def _extract_text(self, html: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
+
+        # Remove non-content tags
+        for tag in soup(["script", "style", "noscript", "footer", "header", "nav", "form", "aside", "img", "svg"]):
             tag.extract()
+
+        skip_phrases = [
+            "cookie", "privacy", "terms", "subscribe", "newsletter",
+            "login", "sign in", "menu", "share", "back to top", "copyright"
+        ]
+
         sections = []
-        for elem in soup.find_all(["h1", "h2", "h3", "p", "li"]):
+        for elem in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "article", "section", "div"]):
             text = elem.get_text(" ", strip=True)
-            if text:
-                sections.append(text)
-        return "\n".join(sections)
+            if not text:
+                continue
+            if any(word in text.lower() for word in skip_phrases):
+                continue
+            if len(text.split()) < 5:  # skip very short non-content lines
+                continue
+            sections.append(text)
+
+        return "\n\n".join(sections)
 
     # --------------------------------------------------------
     # Recursive Crawl
@@ -122,12 +137,10 @@ class GenericWebIngestion:
     def crawl_site(self, start_url: str):
         visited = set()
         to_visit = [(start_url, 0)]
-        domain = urlparse(start_url).netloc
-        domain_folder = self.web_dir / domain
-        domain_folder.mkdir(parents=True, exist_ok=True)
         page_count = 0
+        domain = urlparse(start_url).netloc
 
-        log.info("🌐 Starting crawl", start=start_url, domain=domain)
+        log.info("🌐 Crawling", domain=domain, session=self.session_id)
 
         while to_visit and page_count < self.max_pages:
             url, depth = to_visit.pop(0)
@@ -139,33 +152,34 @@ class GenericWebIngestion:
             try:
                 resp = self.session.get(url, timeout=30)
                 if resp.status_code != 200:
-                    log.warning("⚠️ Skipping (HTTP error)", url=url, status=resp.status_code)
                     continue
 
                 html = resp.text
                 text = self._extract_text(html)
                 if text:
-                    file_name = f"{urlparse(url).path.strip('/').replace('/', '_') or 'index'}_{page_count}.txt"
-                    dest = domain_folder / file_name
+                    file_name = f"page_{page_count}.txt"
+                    dest = self.txt_dir / file_name
                     with open(dest, "w", encoding="utf-8") as f:
                         f.write(text)
+
                     self.manifest[url] = {
                         "file": str(dest),
                         "hash": self._compute_hash(text.encode()),
-                        "last_updated": datetime.utcnow().isoformat(),
                         "type": "text",
+                        "last_updated": datetime.utcnow().isoformat(),
                     }
                     log.info("📝 Saved page", file=file_name)
 
-                # Find and download PDFs
                 soup = BeautifulSoup(html, "html.parser")
+
+                # Download PDFs only (ignore images)
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
-                    if href.lower().endswith(".pdf"):
+                    if ".pdf" in href.lower():
                         pdf_url = urljoin(url, href)
                         self._download_pdf(pdf_url)
 
-                # Queue new internal links
+                # Follow internal links
                 for a in soup.find_all("a", href=True):
                     next_url = urljoin(url, a["href"])
                     if (
@@ -178,29 +192,25 @@ class GenericWebIngestion:
                 time.sleep(self.crawl_delay)
 
             except Exception as e:
-                log.error("❌ Crawl failed for page", url=url, error=str(e))
+                log.error("❌ Crawl failed", url=url, error=str(e))
 
         log.info("✅ Crawl completed", total_pages=page_count)
         self._save_manifest()
 
     # --------------------------------------------------------
-    # Multi-Seed Crawl Entry Point
+    # Multi-Site Entry
     # --------------------------------------------------------
     def crawl_multiple_sites(self, urls: list[str]):
         for url in urls:
-            try:
-                log.info("🚀 Starting crawl for site", site=url)
-                self.crawl_site(url)
-            except Exception as e:
-                log.error("❌ Failed to crawl site", site=url, error=str(e))
-        log.info("🏁 Multi-site crawl complete", total_entries=len(self.manifest))
+            log.info("🚀 Crawling site", url=url)
+            self.crawl_site(url)
+        log.info("🏁 All crawls complete", total_files=len(self.manifest))
 
 
 # --------------------------------------------------------
-# Helper to load URLs from JSON file
+# Helper to load URLs
 # --------------------------------------------------------
 def load_links(file_path: str = "data/web_links.json") -> list[str]:
-    """Load URLs from .json file."""
     p = Path(file_path)
     if not p.exists():
         log.error("Link file not found", file=file_path)

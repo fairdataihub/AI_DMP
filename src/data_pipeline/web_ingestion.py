@@ -20,12 +20,13 @@ from exception.custom_exception import DocumentPortalException
 
 class WebIngestion:
     """
-    🌐 DMP-RAG Web Ingestion (Hybrid Scroll + Pagination Edition)
+    🌐 DMP-RAG Web Ingestion (Session-Aware Edition)
     ----------------------------------------------------------
     ✅ Scrolls each page to ensure full table load
     ✅ Clicks “Next” to go through all public plan pages
     ✅ Downloads all visible DMP PDFs
     ✅ Skips duplicates using manifest.json
+    ✅ Creates a session folder for each run
     ✅ Safe for large datasets (≈1700+ PDFs)
     """
 
@@ -38,13 +39,22 @@ class WebIngestion:
     ):
         self.data_root = Path(data_root)
         self.web_dir = self.data_root / "web_sources"
+
+        # --- create session folder ---
+        self.session_id = f"session_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        self.session_dir = self.web_dir / self.session_id
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- manifest paths ---
         self.manifest_path = self.web_dir / "manifest.json"
+        self.session_manifest_path = self.session_dir / "manifest_session.json"
+
         self.wait_time = wait_time
         self.scroll_pause = scroll_pause
         self.max_pages = max_pages
-        self.web_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = self._load_manifest()
-        log.info("WebIngestion initialized", web_dir=str(self.web_dir))
+
+        log.info("WebIngestion initialized", session=self.session_id, web_dir=str(self.session_dir))
 
     # --------------------------------------------------------
     # Manifest handling
@@ -59,8 +69,19 @@ class WebIngestion:
         return {}
 
     def _save_manifest(self):
+        """Save both global and session manifests."""
         with open(self.manifest_path, "w", encoding="utf-8") as f:
             json.dump(self.manifest, f, indent=2)
+
+        # also save session-specific manifest
+        session_data = {
+            "session_id": self.session_id,
+            "created_at": datetime.utcnow().isoformat(),
+            "file_count": len(self.manifest),
+            "files": list(self.manifest.keys()),
+        }
+        with open(self.session_manifest_path, "w", encoding="utf-8") as f:
+            json.dump(session_data, f, indent=2)
 
     # --------------------------------------------------------
     # Selenium setup
@@ -73,7 +94,7 @@ class WebIngestion:
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--window-size=1920,1080")
         prefs = {
-            "download.default_directory": str(self.web_dir.resolve()),
+            "download.default_directory": str(self.session_dir.resolve()),
             "download.prompt_for_download": False,
             "plugins.always_open_pdf_externally": True,
         }
@@ -96,7 +117,7 @@ class WebIngestion:
     # --------------------------------------------------------
     def crawl_dmptool_full(self, start_url: str):
         driver = self._init_driver()
-        page_num = 1
+        page_num = 1  # starting page
         try:
             driver.get(start_url)
             time.sleep(self.wait_time)
@@ -154,7 +175,7 @@ class WebIngestion:
                 title_text = titles[i].text.strip() if i < len(titles) else f"plan_{page_num}_{i}"
                 safe_name = "".join(c for c in title_text if c.isalnum() or c in (" ", "_", "-")).strip()
                 fname = f"{safe_name or 'plan'}_{page_num}_{i}.pdf"
-                dest = self.web_dir / fname
+                dest = self.session_dir / fname  # save inside session folder
 
                 # --- Skip duplicates ---
                 if dest.exists():
@@ -171,7 +192,7 @@ class WebIngestion:
 
                 downloaded = None
                 for _ in range(15):
-                    candidates = list(self.web_dir.glob("*.pdf"))
+                    candidates = list(self.session_dir.glob("*.pdf"))
                     if candidates:
                         downloaded = max(candidates, key=os.path.getctime)
                         break
@@ -181,11 +202,13 @@ class WebIngestion:
                     log.warning("⚠️ No PDF downloaded", title=title_text)
                     continue
 
+                # rename and move into session folder
                 downloaded.rename(dest)
                 file_hash = self._compute_hash(dest)
                 self.manifest[str(dest)] = {
                     "file": str(dest),
                     "hash": file_hash,
+                    "session": self.session_id,
                     "last_updated": datetime.utcnow().isoformat(),
                 }
                 log.info("✅ Downloaded", file=dest.name)
