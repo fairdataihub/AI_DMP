@@ -1,92 +1,139 @@
 import os
 import sys
-import json
+import yaml
 from dotenv import load_dotenv
-from utils.config_loader import load_config
+from pathlib import Path
 from langchain_community.chat_models import ChatOllama
 from langchain_community.embeddings import OllamaEmbeddings
-from logger import GLOBAL_LOGGER as log
+from logger.custom_logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
+
 
 class ModelLoader:
     """
-    Loads only LLaMA-based LLMs and Ollama embeddings (local or remote).
-    Supports multiple versions: LLaMA 3.1, 3.3, 4, etc.
+    Strict + robust version for DMP-RAG.
+    ----------------------------------------------------------
+    ✅ Automatically finds config/config.yaml from any depth
+    ✅ Requires all parameters to come from YAML (no defaults)
+    ✅ Works both locally and in production environments
     """
 
     def __init__(self):
-        if os.getenv("ENV", "local").lower() != "production":
+        # --- Detect environment mode ---
+        env_mode = os.getenv("ENV", "local").lower()
+        if env_mode != "production":
             load_dotenv()
-            log.info("Running in LOCAL mode: .env loaded")
+            log.info("🌱 Running in LOCAL mode: .env loaded")
         else:
-            log.info("Running in PRODUCTION mode")
+            log.info("🏭 Running in PRODUCTION mode")
 
-        self.config = load_config()
-        log.info("YAML config loaded", config_keys=list(self.config.keys()))
-
-    def load_embeddings(self):
-        """
-        Load and return embedding model via Ollama.
-        """
+        # --- Locate config/config.yaml automatically ---
         try:
-            embed_block = self.config["embedding_model"]
-            provider = embed_block.get("provider", "ollama")
-            model_name = embed_block.get("model_name", "nomic-embed-text")
+            current_path = Path(__file__).resolve()
+            config_path = None
+            for parent in current_path.parents:
+                potential_path = parent / "config" / "config.yaml"
+                if potential_path.exists():
+                    config_path = potential_path
+                    break
 
-            if provider != "ollama":
+            if not config_path:
+                raise FileNotFoundError("Could not locate config/config.yaml in parent directories.")
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                self.config = yaml.safe_load(f)
+
+            log.info("✅ YAML config loaded", config_path=str(config_path))
+
+        except Exception as e:
+            log.error("❌ Failed to load config.yaml", error=str(e))
+            raise DocumentPortalException(f"Failed to load config.yaml: {e}", sys)
+
+    # ----------------------------------------------------------
+    # Embedding Loader (strict)
+    # ----------------------------------------------------------
+    def load_embeddings(self):
+        """Load embedding model from config.yaml (no hardcoded defaults)."""
+        try:
+            embed_block = self.config.get("embedding_model")
+            if not embed_block:
+                raise ValueError("Missing 'embedding_model' block in config.yaml")
+
+            provider = embed_block.get("provider")
+            model_name = embed_block.get("model_name")
+
+            if not provider or not model_name:
+                raise ValueError("Both 'provider' and 'model_name' are required in embedding_model")
+
+            if provider.lower() != "ollama":
                 raise ValueError(f"Unsupported embedding provider: {provider}")
 
-            log.info("Loading embedding model", model=model_name)
+            log.info(f"🔤 Loading embedding model from config.yaml → {model_name}")
             return OllamaEmbeddings(model=model_name)
 
         except Exception as e:
-            log.error("Error loading embedding model", error=str(e))
-            raise DocumentPortalException("Failed to load embedding model", sys)
+            log.error("❌ Embedding loading failed", error=str(e))
+            raise DocumentPortalException(f"Embedding loading failed: {e}", sys)
 
+    # ----------------------------------------------------------
+    # LLaMA 3.3 Loader (strict)
+    # ----------------------------------------------------------
     def load_llm(self):
-        """
-        Load and return a LLaMA model (local via Ollama).
-        """
-        llm_block = self.config["llm"]
-        llama_variant = os.getenv("LLAMA_VARIANT", "llama3.3")  # Default variant
+        """Load LLaMA 3.3 (or variant) strictly from config.yaml."""
+        try:
+            llm_block = self.config.get("llm")
+            if not llm_block:
+                raise ValueError("Missing 'llm' section in config.yaml")
 
-        if llama_variant not in llm_block:
-            log.error("Requested LLaMA variant not found", variant=llama_variant)
-            raise ValueError(f"LLaMA variant '{llama_variant}' not found in config")
+            llama_variant = os.getenv("LLAMA_VARIANT", "llama3.3")
+            if llama_variant not in llm_block:
+                raise ValueError(f"LLaMA variant '{llama_variant}' not found in config.yaml")
 
-        llm_config = llm_block[llama_variant]
-        provider = llm_config.get("provider", "ollama")
-        model_name = llm_config.get("model_name")
-        base_url = llm_config.get("api_base_url", "http://localhost:11434")
-        temperature = llm_config.get("temperature", 0.1)
-        max_tokens = llm_config.get("max_output_tokens", 2048)
+            llm_config = llm_block[llama_variant]
 
-        log.info("Loading LLaMA model", variant=llama_variant, model=model_name)
+            # Required fields
+            required_keys = ["provider", "model_name", "api_base_url", "temperature", "max_output_tokens"]
+            for key in required_keys:
+                if key not in llm_config:
+                    raise ValueError(f"Missing required key '{key}' under llm.{llama_variant} in config.yaml")
 
-        if provider == "ollama":
-            return ChatOllama(
-                model=model_name,
-                base_url=base_url,
-                temperature=temperature,
-                num_predict=max_tokens
-            )
+            provider = llm_config["provider"]
+            model_name = llm_config["model_name"]
+            base_url = llm_config["api_base_url"]
+            temperature = llm_config["temperature"]
+            max_tokens = llm_config["max_output_tokens"]
 
-        else:
-            log.error("Unsupported provider", provider=provider)
-            raise ValueError(f"Unsupported provider: {provider}")
+            log.info(f"🦙 Loading LLaMA model from config.yaml → {llama_variant} ({model_name})")
+
+            if provider.lower() == "ollama":
+                return ChatOllama(
+                    model=model_name,
+                    base_url=base_url,
+                    temperature=temperature,
+                    num_predict=max_tokens
+                )
+            else:
+                raise ValueError(f"Unsupported LLM provider: {provider}")
+
+        except Exception as e:
+            log.error("❌ LLaMA loading failed", error=str(e))
+            raise DocumentPortalException(f"LLaMA loading failed: {e}", sys)
 
 
+# ----------------------------------------------------------
+# Local Test (Optional)
+# ----------------------------------------------------------
 if __name__ == "__main__":
     loader = ModelLoader()
 
-    # Test Embedding
+    # --- Test Embedding ---
     embeddings = loader.load_embeddings()
-    print(f"Embedding Model Loaded: {embeddings}")
-    result = embeddings.embed_query("Hello, how are you?")
-    print(f"Embedding Result: {result}")
+    print(f"✅ Embedding model loaded: {embeddings}")
+    test_vec = embeddings.embed_query("Hello NIH DMP!")
+    print(f"🔢 Embedding vector length: {len(test_vec)}")
 
-    # Test LLM
+    # --- Test LLaMA ---
     llm = loader.load_llm()
-    print(f"LLM Loaded: {llm}")
-    result = llm.invoke("Hello, how are you?")
-    print(f"LLM Result: {result.content}")
+    print(f"✅ LLaMA model loaded: {llm}")
+    response = llm.invoke("Summarize the purpose of NIH Data Management Plans.")
+    print("\n🧠 Model Output:\n", response.content)
