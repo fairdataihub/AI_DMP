@@ -1,4 +1,4 @@
-# ========================
+venv/# ========================
 # 🐍 Python Cache & Virtualenv
 # ========================
 __pycache__/
@@ -58,11 +58,6 @@ logs/
 dist/
 build/
 document_portal.egg-info/
-
-# ========================
-# 🧪 Temporary & Test Files
-# ========================
-test.py
 
 # Ignore image files
 *.png
