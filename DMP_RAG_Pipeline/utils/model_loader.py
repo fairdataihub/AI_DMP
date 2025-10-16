@@ -1,47 +1,47 @@
-from __future__ import annotations
-from typing import Optional, Tuple
-
-from logger.custom_logger import GLOBAL_LOGGER as log
-from exception.custom_exception import DocumentPortalException
-
-# Embeddings / LLMs
-from langchain.embeddings import HuggingFaceEmbeddings
+# src/utils/model_loader.py
+import sys
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
-# Add other providers if you need (OpenAI, Groq, etc.)
-
+from exception.custom_exception import DocumentPortalException
+from logger.custom_logger import GLOBAL_LOGGER as log
+import yaml
+from pathlib import Path
 
 class ModelLoader:
-    """
-    Central place to instantiate embeddings + LLM.
-    You can swap providers by changing names in pipeline config.
-    """
+    """Unified model loader for embeddings and LLMs."""
 
-    def __init__(
-        self,
-        embed_model: str = "sentence-transformers/all-MiniLM-L6-v2",
-        llm_model: str = "llama3.3",
-    ):
-        self.embed_model = embed_model
-        self.llm_model = llm_model
-        log.info(f"ModelLoader configured | embeddings={embed_model} | llm={llm_model}")
-
-    def load_embeddings(self):
+    def __init__(self, config_path: str = "config/config.yaml"):
         try:
-            emb = HuggingFaceEmbeddings(model_name=self.embed_model)
-            log.info("✅ Embeddings loaded.")
-            return emb
+            with open(config_path, "r", encoding="utf-8") as f:
+                self.cfg = yaml.safe_load(f)
+
+            models = self.cfg.get("models", {})
+            self.llm_name = models.get("llm_name", "llama3")
+            self.embedding_model = models.get(
+                "embedding_model", "sentence-transformers/all-MiniLM-L6-v2"
+            )
+
+            log.info("ModelLoader initialized",
+                     llm=self.llm_name,
+                     embed=self.embedding_model)
         except Exception as e:
-            log.exception("Failed to load embeddings.")
-            raise DocumentPortalException(f"Embeddings init failed: {e}")
+            log.error("Failed to load model config", error=str(e))
+            raise DocumentPortalException("ModelLoader initialization error", e)
 
     def load_llm(self):
         try:
-            llm = Ollama(model=self.llm_model)
-            log.info("✅ LLM loaded.")
+            llm = Ollama(model=self.llm_name)
+            log.info("LLM loaded successfully", model=self.llm_name)
             return llm
         except Exception as e:
-            log.exception("Failed to load LLM.")
-            raise DocumentPortalException(f"LLM init failed: {e}")
+            log.error("Failed to load LLM", error=str(e))
+            raise DocumentPortalException("LLM loading error", e)
 
-    def load_all(self) -> Tuple[object, object]:
-        return self.load_embeddings(), self.load_llm()
+    def load_embeddings(self):
+        try:
+            emb = HuggingFaceEmbeddings(model_name=self.embedding_model)
+            log.info("Embeddings loaded successfully", model=self.embedding_model)
+            return emb
+        except Exception as e:
+            log.error("Failed to load embeddings", error=str(e))
+            raise DocumentPortalException("Embedding loading error", e)
