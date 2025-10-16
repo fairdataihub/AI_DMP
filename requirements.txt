@@ -70,6 +70,8 @@ streamlit
 selenium
 webdriver-manager
 
+rouge-score
+
 # ============================================
 # 📦 Local Package (Editable Install)
 # ============================================
