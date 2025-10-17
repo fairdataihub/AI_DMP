@@ -1,5 +1,5 @@
 # ===============================================================
-# core_pipeline.py — Web-Integrated RAG Core (Using YAML + Prompt Library)
+# core_pipeline_web.py — Web-Integrated RAG Core (Markdown-Aligned)
 # ===============================================================
 import re
 import json
@@ -26,6 +26,7 @@ from prompt.prompt_library import PROMPT_REGISTRY, PromptType
 # ===============================================================
 class ConfigManager:
     """Loads and provides access to YAML configuration."""
+
     def __init__(self, config_path="config/config.yaml"):
         path = Path(config_path)
         if not path.exists():
@@ -40,9 +41,14 @@ class ConfigManager:
 
         log.info("✅ Config loaded successfully")
 
-    def get_path(self, key): return Path(self.paths.get(key))
-    def get_model(self, key): return self.models.get(key)
-    def get_rag_param(self, key): return self.rag.get(key)
+    def get_path(self, key):
+        return Path(self.paths.get(key))
+
+    def get_model(self, key):
+        return self.models.get(key)
+
+    def get_rag_param(self, key):
+        return self.rag.get(key)
 
 
 # ===============================================================
@@ -53,7 +59,7 @@ class DMPPipeline:
 
     def __init__(self, config_path="config/config.yaml"):
         try:
-            # Load config
+            # --- Load configuration ---
             self.config = ConfigManager(config_path)
             self.data_pdfs = self.config.get_path("data_pdfs")
             self.index_dir = self.config.get_path("index_dir")
@@ -65,16 +71,21 @@ class DMPPipeline:
             for p in [self.output_md, self.output_docx, self.output_json]:
                 p.mkdir(parents=True, exist_ok=True)
 
-            # Load models
+            # --- Load template file ---
+            if not self.template_md.exists():
+                raise FileNotFoundError(f"❌ DMP template not found: {self.template_md}")
+            self.template_text = self.template_md.read_text(encoding="utf-8")
+
+            # --- Load models ---
             self.model_loader = ModelLoader()
             self.embeddings = self.model_loader.load_embeddings()
             self.llm_name = self.model_loader.llm_name
             self.llm = Ollama(model=self.llm_name)
 
-            # Load prompt template from registry
-            self.prompt_template = PROMPT_REGISTRY[PromptType.CONTEXT_QA.value]
+            # --- Load prompt template from registry ---
+            self.prompt_template = PROMPT_REGISTRY[PromptType.NIH_DMP.value]
 
-            log.info("✅ DMPPipeline initialized (YAML + prompt library mode)")
+            log.info("✅ DMPPipeline initialized (Markdown-Aligned Mode)")
 
         except Exception as e:
             log.error("❌ Failed to initialize DMPPipeline", error=str(e))
@@ -121,7 +132,7 @@ class DMPPipeline:
             rag_chain = (
                 RunnableMap({
                     "context": lambda x: retriever.invoke(x["input"]),
-                    "input": lambda x: x["input"],
+                    "question": lambda x: x["input"],
                 })
                 | self.prompt_template
                 | self.llm
@@ -134,27 +145,29 @@ class DMPPipeline:
 
     # ---------------------------------------------------------------
     def generate_dmp(self, title: str, form_inputs: dict):
-        """Generate NIH DMP dynamically from user form input."""
+        """Generate NIH DMP dynamically from user web form input."""
         try:
             retriever = self._load_or_build_index().as_retriever(
                 search_kwargs={"k": self.config.get_rag_param("retriever_top_k")}
             )
             rag_chain = self._build_rag_chain(retriever)
 
-            # Combine user-provided form input into a structured query
+            # --- Combine user-provided form input ---
             user_elements = [
-                f"{key.upper()}: {val}" for key, val in form_inputs.items() if val.strip()
+                f"{key.replace('_',' ').title()}: {val}" for key, val in form_inputs.items() if val.strip()
             ]
             query = (
-                f"You are an NIH data steward. Create a full Data Management Plan "
-                f"for project '{title}'. Use the background info below:\n\n" +
-                "\n".join(user_elements)
+                f"You are an NIH data steward. Create a complete Data Management and Sharing Plan "
+                f"for project titled '{title}'. Use the NIH DMP Markdown template below and "
+                f"integrate the user's inputs accordingly.\n\n"
+                f"User Inputs:\n{chr(10).join(user_elements)}\n\n"
+                f"NIH DMP Template:\n{self.template_text}"
             )
 
-            # Retrieve context and generate text
+            # --- Retrieve context and generate structured text ---
             result = rag_chain.invoke({"input": query})
 
-            # Save outputs
+            # --- Save outputs ---
             safe_title = re.sub(r'[\\/*?:"<>|]', "_", title.strip())
             md_path = self.output_md / f"{safe_title}.md"
             docx_path = self.output_docx / f"{safe_title}.docx"
@@ -164,13 +177,18 @@ class DMPPipeline:
             pypandoc.convert_text(result, "docx", format="md", outputfile=str(docx_path))
 
             json.dump(
-                {"title": title, "form_inputs": form_inputs, "generated_markdown": result},
+                {
+                    "title": title,
+                    "form_inputs": form_inputs,
+                    "template_used": str(self.template_md),
+                    "generated_markdown": result,
+                },
                 open(json_path, "w", encoding="utf-8"),
                 indent=2,
                 ensure_ascii=False,
             )
 
-            log.info("✅ DMP generated successfully", title=title)
+            log.info("✅ DMP generated successfully (Markdown structure preserved)", title=title)
             return result
         except Exception as e:
             raise DocumentPortalException("DMP generation error", e)
