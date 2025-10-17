@@ -72,6 +72,8 @@ webdriver-manager
 
 rouge-score
 
+openpyxl
+
 # ============================================
 # 📦 Local Package (Editable Install)
 # ============================================
