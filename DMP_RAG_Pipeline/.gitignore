@@ -82,3 +82,4 @@ test.py
 
 # Ignore Markdown files
 *.md
+*.cgi
