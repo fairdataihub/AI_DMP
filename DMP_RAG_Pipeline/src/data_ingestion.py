@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, sys, time, json, hashlib, requests, shutil
+import os, sys, time, json, hashlib, requests, shutil, re
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -22,14 +22,12 @@ class UnifiedWebIngestion:
     """
     🌐 Unified NIH Grants + DMPTool Ingestion (Cross-Session Deduplication + Copy Forward)
     --------------------------------------------------------------------
-    ✅ Loads hashes from all previous sessions automatically
+    ✅ Loads hashes from previous sessions
     ✅ Deduplicates across sessions by file hash
     ✅ Copies previous PDFs/texts into new session before crawling
     ✅ Saves per-domain + master manifests safely
-    ✅ Skips duplicate PDFs intelligently
-    ✅ Fully timestamped folders for each run
-    ✅ Extracts all main text content tags for RAG (h1-h4, p, li, article, section, div)
-    ✅ Cleans up older sessions automatically after each run
+    ✅ Skips duplicate PDFs and login/signup/account pages
+    ✅ Extracts meaningful content for RAG
     """
 
     def __init__(
@@ -62,7 +60,7 @@ class UnifiedWebIngestion:
         print(f"\n✅ Session Folder Created: {self.session_folder}\n")
 
     # --------------------------------------------------------
-    # Folder logic
+    # Folder setup
     # --------------------------------------------------------
     def _detect_or_create_session_folder(self) -> Path:
         parent = self.data_root / "data_ingestion"
@@ -74,9 +72,6 @@ class UnifiedWebIngestion:
         folder.mkdir(parents=True, exist_ok=True)
         return folder
 
-    # --------------------------------------------------------
-    # Prepare site directories (text/pdf + per-domain manifest)
-    # --------------------------------------------------------
     def _prepare_site_dirs(self, domain: str):
         site_root = self.session_folder / domain
         txt_dir, pdf_dir = site_root / "texts", site_root / "pdfs"
@@ -89,7 +84,7 @@ class UnifiedWebIngestion:
         return txt_dir, pdf_dir, manifest_path, {"files": {}}
 
     # --------------------------------------------------------
-    # Load hashes from all previous sessions
+    # Load previous manifests
     # --------------------------------------------------------
     def _load_previous_manifests(self) -> dict[str, set[str]]:
         parent = self.data_root / "data_ingestion"
@@ -112,12 +107,12 @@ class UnifiedWebIngestion:
             except Exception as e:
                 print(f"⚠️ Failed to load {manifest_path}: {e}")
 
-        if not hash_index:
-            print("⚠️ No previous manifest found — starting fresh.")
-        else:
+        if hash_index:
             print("♻️ Loaded previous session hashes:")
             for d, c in hash_index.items():
                 print(f"   - {d}: {len(c)} known hashes")
+        else:
+            print("⚠️ No previous manifest found — starting fresh.")
         return hash_index
 
     # --------------------------------------------------------
@@ -125,98 +120,51 @@ class UnifiedWebIngestion:
     # --------------------------------------------------------
     def _save_manifest(self, manifest_path: Path, manifest: dict, domain: str):
         try:
-            manifest_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = manifest_path.with_suffix(".tmp")
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(manifest, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
             tmp.replace(manifest_path)
-
             self.global_manifest["sites"][domain] = manifest.get("files", {})
             with open(self.master_manifest, "w", encoding="utf-8") as f:
                 json.dump(self.global_manifest, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-
             print(f"✅ Manifest written: {manifest_path}")
         except Exception as e:
             print(f"❌ Manifest save error for {domain}: {e}")
 
     # --------------------------------------------------------
-    # Helper: Detect policy-related or DMP-rich text
-    # --------------------------------------------------------
-    def _looks_like_policy_paragraph(self, t: str) -> bool:
-        import re
-        key_terms = [
-            "data management plan", "dmp", "dms plan", "data sharing", "repository",
-            "metadata", "persistent identifier", "fair data", "open access", "compliance",
-            "policy", "guideline", "federal regulation", "grants policy statement",
-            "uniform guidance", "budget justification", "rfa", "foa", "dmsp",
-            "notice of funding opportunity", "research data", "oversight", "sf424",
-            "rppr", "era commons", "extramural research", "data governance",
-            "human subjects", "privacy", "pii", "phi", "consent", "security", "access control"
-        ]
-        patterns = [
-            r"\b(RFA|PAR|PA|NOT)-[A-Z]{2}-\d{2}-\d{3}\b",
-            r"\bNOSI\b", r"\b(2\s*CFR\s*200|45\s*CFR\s*46)\b", r"\bSF-?424\b", r"\bRPPR\b"
-        ]
-        score = sum(k in t for k in key_terms)
-        score += sum(2 for p in patterns if re.search(p, t))
-        punct = sum(ch in t for ch in ".;,:")
-        return score >= 2 and punct >= 2
-
-    # --------------------------------------------------------
-    # Text Filters (Expanded RAG-Optimized)  — (YOUR ORIGINAL, KEPT)
+    # Text filters (enhanced)
     # --------------------------------------------------------
     def _is_valid_text_block(self, text: str) -> bool:
-        import re
         text = text.strip().lower()
         if not text or len(text.split()) < 5:
             return False
-        if re.search(r"\b(expired|expiration date|superseded|replaced|no longer valid)\b", text):
+        if re.search(r"\b(expired|superseded|no longer valid)\b", text):
             return False
         if "page last updated" in text or "last modified" in text:
             return False
 
         skip_terms = [
-            "cookie", "privacy", "terms", "accessibility", "subscribe", "newsletter", "login",
-            "sign in", "register", "menu", "navigation", "toolbar", "sidebar", "copyright",
-            "contact", "mission", "vision", "overview", "site map", "homepage", "footer", "header",
-            "social media", "search", "filter", "sort", "index", "click here", "faq", "help center",
-            "facebook", "twitter", "linkedin", "instagram", "youtube", "rss feed", "press release",
-            "photo gallery", "webinar", "training", "conference", "upcoming events", "faq",
-            "maintenance", "404 not found", "back to top", "home", "share this", "unsubscribe",
-            "press office", "media", "disclaimer", "copyright ©", "terms of use", "employment",
-            "job openings", "careers", "policy notice", "ombudsman", "feedback", "error page",
-            "browser support", "email updates", "security notice", "system maintenance",
-            "download center", "access denied", "temporary unavailable", "page not found",
-            "javascript required", "contact us", "training calendar", "internship", "fellowship",
-            "diversity statement", "omb", "about the website", "help desk", "data request form",
-            "archive", "newsroom", "media inquiries", "submit news", "public engagement",
+            "cookie", "privacy", "terms", "subscribe", "newsletter", "login", "sign in", "register",
+            "sign up", "create account", "user", "my account", "unsubscribe", "copyright", "social",
+            "contact us", "feedback", "help", "faq", "press", "media", "event", "calendar",
+            "webinar", "training", "conference", "careers", "employment", "donate"
         ]
         if any(term in text for term in skip_terms):
             return False
 
         whitelist = [
             "nih", "grant", "funding opportunity", "proposal", "application", "rfa", "foa",
-            "data management", "data sharing", "metadata", "repository", "dataset", "policy",
-            "guideline", "regulation", "oversight", "federal policy", "uniform guidance",
-            "research integrity", "ethics", "rppr", "budget justification", "data plan", "dmsp",
-            "bioinformatics", "data science", "machine learning", "rag system", "fair data",
-            "open data", "findable", "accessible", "interoperable", "reusable", "metadata schema",
-            "office of data science strategy", "extramural research", "clinical trial",
-            "ai ethics", "computational biology", "nlp", "retrieval-augmented generation",
-            "semantic search", "data governance", "open science", "grants policy statement",
+            "data management", "data sharing", "repository", "dataset", "policy",
+            "guideline", "regulation", "federal policy", "fair data", "open data",
+            "data science", "ai ethics", "clinical trial", "metadata", "dmsp",
+            "findable", "accessible", "interoperable", "reusable"
         ]
-        if any(term in text for term in whitelist):
-            return True
-        if self._looks_like_policy_paragraph(text):
-            return True
-        return False
+        return any(term in text for term in whitelist)
 
     # --------------------------------------------------------
-    # Helper Functions
+    # Load links
     # --------------------------------------------------------
     def _load_links(self, path: str) -> list[str]:
         try:
@@ -231,48 +179,29 @@ class UnifiedWebIngestion:
         return hashlib.sha256(content).hexdigest()
 
     # --------------------------------------------------------
-    # HTML Cleaning + Text Extraction (NEW)
+    # HTML cleanup + extraction
     # --------------------------------------------------------
     def _clean_html(self, html: str) -> BeautifulSoup:
         soup = BeautifulSoup(html, "html.parser")
-
-        # strip scripts/styles/iframes/svg/forms
         for tag in soup(["script", "style", "noscript", "iframe", "svg", "form"]):
             tag.decompose()
 
-        # remove common site chrome
-        chrome_selectors = [
-            "[class*=banner]", "[id*=banner]", "[class*=brandbar]", "[id*=brandbar]",
-            "[class*=nav]", "[id*=nav]", "[role=navigation]", "[class*=breadcrumb]", "[id*=breadcrumb]",
-            "[class*=menu]", "[id*=menu]", "[class*=sidebar]", "[id*=sidebar]",
-            "[class*=footer]", "[id*=footer]", "[role=contentinfo]",
-            "[class*=header]", "[id*=header]", "[role=banner]",
-            "[class*=social]", "[id*=social]", "[class*=share]", "[id*=share]",
-            "[class*=contact]", "[id*=contact]", "[class*=subscribe]", "[id*=subscribe]",
-            "[class*=search]", "[id*=search]", "[role=search]",
-            "[class*=cookie]", "[id*=cookie]", "[class*=consent]", "[id*=consent]",
-            "[class*=alert]", "[id*=alert]", "[class*=promo]", "[id*=promo]",
-            "[class*=carousel]", "[id*=carousel]", "[class*=accordion]", "[id*=accordion]",
-            "[class*=tabs]", "[id*=tabs]"
-        ]
-        for sel in chrome_selectors:
+        for sel in [
+            "[class*=banner]", "[id*=banner]", "[class*=footer]", "[id*=footer]",
+            "[class*=nav]", "[id*=nav]", "[role=navigation]", "[class*=menu]", "[id*=menu]",
+            "[class*=sidebar]", "[id*=sidebar]", "[class*=social]", "[id*=social]",
+            "[class*=search]", "[id*=search]", "[class*=cookie]", "[id*=cookie]",
+        ]:
             for t in soup.select(sel):
                 t.decompose()
-
         return soup
 
     def _extract_text(self, soup: BeautifulSoup) -> str:
-        blocks: list[str] = []
-        for el in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "article", "section", "div"]):
+        blocks = []
+        for el in soup.find_all(["h1", "h2", "h3", "p", "li", "section", "article", "div"]):
             txt = el.get_text(" ", strip=True)
             if self._is_valid_text_block(txt):
-                # keep headings a bit more salient
-                name = el.name.lower() if el.name else ""
-                if name in {"h1", "h2"}:
-                    txt = f"{txt}"
                 blocks.append(txt)
-
-        # light merge to reduce tiny fragments
         merged, buf = [], ""
         for s in blocks:
             if len(buf.split()) < 90:
@@ -282,11 +211,10 @@ class UnifiedWebIngestion:
                 buf = s
         if buf:
             merged.append(buf)
-
         return "\n\n".join(merged)
 
     # --------------------------------------------------------
-    # PDF Download (with site prefix)
+    # PDF download
     # --------------------------------------------------------
     def _download_pdf(self, href: str, pdf_dir: Path, domain: str, manifest: dict):
         try:
@@ -297,15 +225,11 @@ class UnifiedWebIngestion:
             if domain in self.previous_hashes and ph in self.previous_hashes[domain]:
                 self.stats[domain]["skipped"] += 1
                 return
-            site_prefix = domain.split(".")[0]
-            fname = f"{site_prefix}_dmp_{len(manifest['files']) + 1:04d}.pdf"
+            fname = f"{domain.split('.')[0]}_dmp_{len(manifest['files']) + 1:04d}.pdf"
             dest = pdf_dir / fname
             dest.write_bytes(r.content)
             manifest["files"][href] = {
-                "url": href,
-                "file": str(dest),
-                "hash": ph,
-                "type": "pdf",
+                "url": href, "file": str(dest), "hash": ph, "type": "pdf",
                 "last_updated": datetime.utcnow().isoformat(),
             }
             self.stats[domain]["pdfs"] += 1
@@ -313,28 +237,33 @@ class UnifiedWebIngestion:
             print(f"⚠️ PDF download failed: {href} | {e}")
 
     # --------------------------------------------------------
-    # NIH Crawl  (now uses HTML cleaning + extraction)
+    # NIH Crawl (skip login/signup URLs)
     # --------------------------------------------------------
     def _crawl_nih(self, start_url: str, domain: str):
         txt_dir, pdf_dir, manifest_path, manifest = self._prepare_site_dirs(domain)
         visited, queue = set(), [(start_url, 0)]
-        print(f"🌐 Crawling NIH site: {start_url}")
+        skip_url_terms = [
+            "login", "signin", "signup", "register", "account", "forgot", "logout",
+            "profile", "cart", "donate", "feedback", "subscribe", "unsubscribe"
+        ]
 
+        print(f"🌐 Crawling NIH site: {start_url}")
         with tqdm(total=self.max_pages, desc="NIH Pages", unit="page") as pbar:
             while queue and len(visited) < self.max_pages:
                 url, depth = queue.pop(0)
                 if url in visited or depth > self.max_depth:
                     continue
+                if any(term in url.lower() for term in skip_url_terms):
+                    continue
+
                 visited.add(url)
                 try:
                     r = self.session.get(url, timeout=20)
                     if r.status_code != 200 or "text/html" not in r.headers.get("content-type", ""):
                         continue
 
-                    # 🧼 clean + extract
                     soup = self._clean_html(r.text)
                     text = self._extract_text(soup)
-
                     if text:
                         ph = self._compute_hash(text.encode("utf-8"))
                         if ph not in self.previous_hashes.get(domain, set()):
@@ -342,52 +271,52 @@ class UnifiedWebIngestion:
                             dest = txt_dir / fname
                             dest.write_text(text, encoding="utf-8")
                             manifest["files"][url] = {
-                                "url": url,
-                                "file": str(dest),
-                                "hash": ph,
-                                "type": "text",
-                                "last_updated": datetime.utcnow().isoformat(),
+                                "url": url, "file": str(dest), "hash": ph,
+                                "type": "text", "last_updated": datetime.utcnow().isoformat(),
                             }
                             self.stats[domain]["pages"] += 1
 
-                    # PDFs
-                    for a in soup.find_all("a", href=True):
-                        href = a["href"]
-                        if href.lower().endswith(".pdf"):
-                            self._download_pdf(urljoin(url, href), pdf_dir, domain, manifest)
-
-                    # follow internal links
                     for a in soup.find_all("a", href=True):
                         href = urljoin(url, a["href"])
-                        if urlparse(href).netloc.endswith("nih.gov") and href not in visited and "#" not in href:
+                        if href.lower().endswith(".pdf"):
+                            self._download_pdf(href, pdf_dir, domain, manifest)
+                        elif urlparse(href).netloc.endswith("nih.gov") and "#" not in href:
                             queue.append((href, depth + 1))
 
                     pbar.update(1)
                     time.sleep(self.crawl_delay)
                 except Exception as e:
                     print(f"⚠️ Crawl failed for {url}: {e}")
+
         self._save_manifest(manifest_path, manifest, domain)
-        print(f"✅ NIH crawl completed — Pages={self.stats[domain]['pages']}  PDFs={self.stats[domain]['pdfs']} new")
+        print(f"✅ NIH crawl completed — Pages={self.stats[domain]['pages']} PDFs={self.stats[domain]['pdfs']}")
 
     # --------------------------------------------------------
-    # DMPTool Crawl
+    # DMPTool Crawl (skip login/register pages)
     # --------------------------------------------------------
     def _crawl_dmptool(self, start_url: str, domain: str):
         _, pdf_dir, manifest_path, manifest = self._prepare_site_dirs(domain)
         print(f"🌐 Crawling DMPTool: {start_url}")
+
         options = Options()
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         prefs = {"download.default_directory": str(pdf_dir.resolve())}
         options.add_experimental_option("prefs", prefs)
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
         try:
             driver.get(start_url)
             time.sleep(6)
+
+            if any(w in driver.current_url.lower() for w in ["login", "signin", "signup", "register", "account"]):
+                print(f"⏭️ Skipping auth-related DMPTool page: {driver.current_url}")
+                driver.quit()
+                return
+
             seen = set()
             with tqdm(total=self.max_pages, desc="DMPTool PDFs", unit="pdf") as pbar:
                 while True:
-                    time.sleep(3)
                     pdf_links = driver.find_elements(By.XPATH, "//a[contains(@href, '/export.pdf')]")
                     if not pdf_links:
                         break
@@ -405,14 +334,14 @@ class UnifiedWebIngestion:
                     except NoSuchElementException:
                         break
             self._save_manifest(manifest_path, manifest, domain)
-            print(f"✅ DMPTool crawl completed — PDFs={self.stats[domain]['pdfs']} new")
+            print(f"✅ DMPTool crawl completed — PDFs={self.stats[domain]['pdfs']}")
         except TimeoutException:
             print("⚠️ Timeout while loading DMPTool pages.")
         finally:
             driver.quit()
 
     # --------------------------------------------------------
-    # Copy previous PDFs/texts into the new session
+    # Copy and cleanup
     # --------------------------------------------------------
     def _copy_previous_data(self):
         parent = self.data_root / "data_ingestion"
@@ -420,38 +349,23 @@ class UnifiedWebIngestion:
         if len(sessions) < 2:
             print("ℹ️ No previous session data to copy.")
             return
-
         last_session = sessions[1]
         print(f"♻️ Copying files from previous session: {last_session.name}")
         for domain_dir in last_session.iterdir():
-            if not domain_dir.is_dir() or domain_dir.name == "manifest_master.json":
+            if not domain_dir.is_dir():
                 continue
-
             new_domain_dir = self.session_folder / domain_dir.name
             for subdir in ["pdfs", "texts"]:
                 old_path = domain_dir / subdir
                 new_path = new_domain_dir / subdir
-                if not old_path.exists():
-                    continue
-                new_path.mkdir(parents=True, exist_ok=True)
-                for file in old_path.glob("*"):
-                    target = new_path / file.name
-                    if not target.exists():
-                        try:
+                if old_path.exists():
+                    new_path.mkdir(parents=True, exist_ok=True)
+                    for file in old_path.glob("*"):
+                        target = new_path / file.name
+                        if not target.exists():
                             shutil.copy2(file, target)
-                        except Exception as e:
-                            print(f"⚠️ Failed to copy {file.name}: {e}")
+        print("✅ Previous data copied.")
 
-            old_manifest = domain_dir / f"manifest_{domain_dir.name.replace('.', '_')}.json"
-            new_manifest = new_domain_dir / f"manifest_{domain_dir.name.replace('.', '_')}.json"
-            if old_manifest.exists() and not new_manifest.exists():
-                shutil.copy2(old_manifest, new_manifest)
-
-        print("✅ Previous PDFs and texts copied to new session.")
-
-    # --------------------------------------------------------
-    # Cleanup old sessions (keep only current)
-    # --------------------------------------------------------
     def _cleanup_old_sessions(self):
         parent = self.data_root / "data_ingestion"
         sessions = sorted([p for p in parent.glob("*_NIH_ingestion*") if p.is_dir()], reverse=True)
@@ -472,10 +386,12 @@ class UnifiedWebIngestion:
     # Run all
     # --------------------------------------------------------
     def run_all(self):
-        # Step 1: copy previous files first
-        self._copy_previous_data()
+        # Clean up older sessions first — keep only current
+        self._cleanup_old_sessions()
 
-        # Step 2: crawl all URLs
+        # No need to copy data if we only keep the latest
+        print("🚀 Starting fresh crawl (latest version only).")
+
         for url in self.urls:
             domain = urlparse(url).netloc
             if "dmptool.org" in domain:
@@ -485,10 +401,7 @@ class UnifiedWebIngestion:
             else:
                 print(f"⚠️ Skipped unsupported domain: {domain}")
 
-        print("🏁 All crawls complete.")
-        # Step 3: cleanup older sessions
-        self._cleanup_old_sessions()
-
+        print("🏁 All crawls complete. Latest session only retained.")
 
 # --------------------------------------------------------
 # Example Run
