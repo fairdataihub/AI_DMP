@@ -1,25 +1,25 @@
 # ============================================
 # 🧩 Core Python Utilities
 # ============================================
-python-dotenv
+matplotlib
 numpy
 pandas
-matplotlib
+python-dotenv
 scikit-learn
 
 # ============================================
 # 🤖 Deep Learning & NLP
 # ============================================
 torch
-transformers
 tiktoken
+transformers
 
 # ============================================
 # 🧠 LLMs & RAG Frameworks
 # ============================================
-openai
-ollama
 google-generativeai
+ollama
+openai
 
 # LangChain ecosystem
 langchain
@@ -31,49 +31,47 @@ langchain-groq
 # ============================================
 # 📄 Document Processing
 # ============================================
-pypdf
-PyMuPDF
 docx2txt
+PyMuPDF
 pypandoc
+pypdf
 
 # ============================================
 # 🌐 Web & Data Retrieval
 # ============================================
-requests
 beautifulsoup4
+requests
 
 # ============================================
 # ⚙️ Backend & API
 # ============================================
 fastapi
-uvicorn
 python-multipart
 structlog
+uvicorn
 
 # ============================================
 # 🔍 Indexing & Search
 # ============================================
 faiss-cpu
+lancedb
+sentence-transformers
 
 # ============================================
 # 🧪 Development & Testing
 # ============================================
+cfn-lint
 ipykernel
 pytest
-cfn-lint
 
 # ============================================
 # 💻 UI & Deployment
 # ============================================
-streamlit
-
-selenium
-webdriver-manager
-
-rouge-score
-
 openpyxl
-
+rouge-score
+selenium
+streamlit
+webdriver-manager
 lxml
 
 # ============================================
