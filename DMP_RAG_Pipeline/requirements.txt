@@ -73,6 +73,10 @@ selenium
 streamlit
 webdriver-manager
 lxml
+# ============================================
+# 💻 GPT
+# ============================================
+langchain-openai
 
 # ============================================
 # 📦 Local Package (Editable Install)
